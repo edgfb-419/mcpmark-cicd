@@ -1,5 +1,1 @@
-const unusedVar = "test";
-console.log("Hello world")
-function example() {
-  return "double quotes"
-}
+// Fixed linting errors: removed unused variable, added semicolons, changed to single quotes\nconsole.log('Hello world');\nfunction example() {\n  return 'single quotes';\n}
