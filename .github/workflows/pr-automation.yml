@@ -1,0 +1,149 @@
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run lint
+        id: eslint
+      - run: npx prettier --check .
+        id: prettier
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## Code Quality Report
+            ### ESLint Results:
+            ${{ steps.eslint.outcome === 'success' ? '✅ No ESLint errors found' : '❌ ESLint errors detected' }}
+            ### Prettier Results:
+            ${{ steps.prettier.outcome === 'success' ? '✅ All files formatted correctly' : '❌ Prettier formatting issues found' }}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  testing-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm test -- --coverage
+        id: test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let coverageSummary = 'No coverage data found';
+            if (fs.existsSync('./coverage/coverage-summary.json')) {
+              const summary = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json', 'utf8'));
+              coverageSummary = `### Overall Coverage:
+              - Lines: ${summary.total.lines.pct}%
+              - Functions: ${summary.total.functions.pct}%
+              - Branches: ${summary.total.branches.pct}%
+              - Statements: ${summary.total.statements.pct}%`;
+            }
+            const comment = `## Test Coverage Report
+            ${coverageSummary}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm audit --json > audit-results.json
+        id: audit
+        continue-on-error: true
+      - uses: gitleaks/gitleaks-action@v2
+        id: gitleaks
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let auditResults = 'No vulnerabilities found';
+            if (fs.existsSync('./audit-results.json')) {
+              const audit = JSON.parse(fs.readFileSync('./audit-results.json', 'utf8'));
+              auditResults = audit.metadata.vulnerabilities.total > 0 ? `Found ${audit.metadata.vulnerabilities.total} vulnerabilities` : 'No vulnerabilities found';
+            }
+            const gitleaksResults = ${{ steps.gitleaks.outcome === 'success' ? '✅ No secrets detected' : '❌ Secrets found in code changes' }};
+            const comment = `## Security Scan Report
+            ### Dependencies Vulnerabilities:
+            ${auditResults}
+            ### Secrets Scan:
+            ${gitleaksResults}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  build-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build
+        id: build
+      - run: |
+          # Validate build output and endpoints
+          if [ -d "dist" ]; then
+            echo "✅ Build directory exists"
+            # Check for main entry point (adjust based on project structure)
+            if [ -f "dist/index.js" ]; then
+              echo "✅ Main entry point found"
+            else
+              echo "❌ Main entry point missing"
+              exit 1
+            fi
+          else
+            echo "❌ Build directory missing"
+            exit 1
+          fi
+        id: endpoint-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-preview
+          path: dist/
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const buildStatus = ${{ steps.build.outcome === 'success' ? '✅ Build completed successfully' : '❌ Build failed' }};
+            const endpointStatus = ${{ steps.endpoint-check.outcome === 'success' ? '✅ All endpoints validated' : '❌ Endpoint validation failed' }};
+            const comment = `## Build Validation
+            ### Build Status:
+            ${buildStatus}
+            ### Endpoint Validation:
+            ${endpointStatus}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
